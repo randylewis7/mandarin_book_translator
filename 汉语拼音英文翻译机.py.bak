@@ -1,0 +1,123 @@
+import os
+import re
+import fitz  # PyMuPDF
+from pypinyin import pinyin, Style
+from fpdf import FPDF
+from deep_translator import GoogleTranslator
+import io
+import sys
+
+# Set the default encoding to UTF-8 for standard output and error
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
+def translate_text(text):
+    """
+    Translate Chinese text to English using Google Translator from deep-translator.
+    """
+    try:
+        translated = GoogleTranslator(source='zh-TW', target='en').translate(text)
+        return translated
+    except Exception as e:
+        return f"Error translating text: {e}"
+
+def chinese_to_pinyin_by_sentence(text):
+    """
+    Convert Chinese text to Pinyin with diacritical tone marks, processing each sentence separately.
+    """
+    sentences = re.split(r'(?<=[。！？])', text)  # Split by sentence-ending punctuation
+    pinyin_sentences = []
+    
+    for sentence in sentences:
+        if sentence.strip():
+            pinyin_sentence = pinyin(sentence, style=Style.TONE, heteronym=False)  # Removed segment=True
+            pinyin_sentence = ' '.join([''.join(word) for word in pinyin_sentence])
+            pinyin_sentences.append(pinyin_sentence)
+    
+    return ' '.join(pinyin_sentences)
+
+def process_pdf(input_pdf_path, output_pdf_path):
+    try:
+        # Open the input PDF
+        print(f"Opening input PDF: {input_pdf_path}")
+        doc = fitz.open(input_pdf_path)
+        
+        # Create the output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
+        print(f"Output directory ensured: {os.path.dirname(output_pdf_path)}")
+        
+        # Create a new PDF
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=0)  # Remove page breaks margin
+        pdf.set_margins(0, 0, 0)  # Remove all margins
+        pdf.set_left_margin(0)    # Explicitly set left margin to zero
+        pdf.set_right_margin(0)   # Explicitly set right margin to zero
+        
+        # Add the NotoSerifCJK font that supports Chinese characters and diacritical marks for pinyin
+        try:
+            pdf.add_font("NotoSerifCJK", "", "NotoSerifCJK.ttc", uni=True)
+            print("Font added successfully.")
+        except Exception as e:
+            print(f"Error loading font: {e}")
+            return
+
+        combined_text = ""
+        for page_num in range(len(doc)):
+            print(f"Processing page {page_num + 1} of {len(doc)}...")
+            page = doc[page_num]
+            text = page.get_text("text")
+            if text.strip():
+                combined_text += text.strip() + "\n"
+            else:
+                print(f"No text found on page {page_num + 1}.")
+        
+        # Combine lines that do not end with sentence-ending punctuation
+        combined_text = re.sub(r"(?<![。！？])\n", "", combined_text)
+
+        # Split paragraphs by finding periods followed by new lines and indentation
+        paragraphs = re.split(r"(?<=。)\s*\n\s*", combined_text)
+        
+        for i, paragraph in enumerate(paragraphs):
+            if paragraph.strip():  # Check if the paragraph is not empty
+                print(f"Processing paragraph {i + 1}")
+                chinese_text = paragraph.strip()
+                pinyin_text = chinese_to_pinyin_by_sentence(chinese_text)
+                english_text = translate_text(chinese_text)
+
+                # Write logs to a file instead of printing to console
+                with open("log.txt", "a", encoding="utf-8") as log_file:
+                    log_file.write(f"Processing paragraph {i + 1}\n")
+                    log_file.write(f"Chinese: {chinese_text}\n")
+                    log_file.write(f"Pinyin: {pinyin_text}\n")
+                    log_file.write(f"English: {english_text}\n")
+                
+                # Add content to the PDF, one triplet per page
+                pdf.add_page()  # Start a new page for each triplet
+
+                pdf.set_x(0)  # Reset X position to avoid unwanted margins
+                pdf.set_font("NotoSerifCJK", size=24)  # Set font size to 18 for Chinese text
+                pdf.multi_cell(0, 10, chinese_text, align='L')  # Display Chinese text with left alignment
+
+                pdf.set_x(0)  # Reset X position to avoid unwanted margins
+                pdf.set_font("NotoSerifCJK", size=12)  # Set font size to 12 for Pinyin
+                pdf.multi_cell(0, 8, pinyin_text, align='L')   # Display Pinyin with reduced line height
+
+                pdf.set_x(0)  # Reset X position to avoid unwanted margins
+                pdf.multi_cell(0, 8, english_text, align='L')  # Display English with reduced line height
+
+        # Write the PDF file
+        pdf.output(output_pdf_path)
+        print(f"PDF file created successfully: {output_pdf_path}")
+
+    except Exception as e:
+        print(f"An error occurred during processing: {e}")
+        with open("log.txt", "a", encoding="utf-8") as log_file:
+            log_file.write(f"An error occurred during processing: {e}\n")
+
+# Set the input and output PDF paths
+#input_pdf_path = "input/test_input_chinese_text.pdf"
+input_pdf_path = "input/full_book.pdf"
+output_pdf_path = "output/汉语拼音英文combined.pdf"
+
+# Process the PDF
+process_pdf(input_pdf_path, output_pdf_path)
